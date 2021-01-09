@@ -1,6 +1,12 @@
 #include "ubash.h"
 
-void init_empty_array(char ** arr, int dim){
+void int_empty_array(int ** arr, int dim){
+    for(int i=0; i<dim; ++i){
+        arr[i] = NULL;
+    }
+}
+
+void char_empty_array(char ** arr, int dim){
     for(int i=0; i<dim; ++i){
         arr[i] = NULL;
     }
@@ -25,6 +31,29 @@ void free_mtrx(char *** mtrx){
     }
     free(mtrx);
     mtrx = NULL;
+}
+
+int cmds_num(char *** mtrx){
+    if(mtrx == NULL)
+        return 0;
+    int i = 0;
+    while(mtrx[i] != NULL)
+        ++i;
+    return i;
+}
+
+char ** getfirst_redir(char ** arr){
+    int i = 0;
+    while(arr[i] != NULL){
+        if((arr[i][0] == '<') || (arr[i][0] == '>'))
+            return arr+i;
+        ++i;
+    }
+    return NULL;
+}
+
+bool add_pipe(int * ptr){
+    return ((ptr = malloc(2*sizeof(int))) != NULL);
 }
 
 char * getprompt(){
@@ -63,7 +92,7 @@ char*** parser(char* line){
         perror("");
         return NULL;
     }
-    init_empty_array(mtrx, rowsto_alloc);
+    char_empty_array(mtrx, rowsto_alloc);
     char* cmd;
     char* cmd_context;
     int cmd_index = 0;
@@ -75,9 +104,11 @@ char*** parser(char* line){
             free_mtrx(mtrx);
             return NULL;
         }
-        init_empty_array(mtrx[cmd_index], colsto_alloc);
+        char_empty_array(mtrx[cmd_index], colsto_alloc);
         char** toredirect = NULL;
         size_t toredirect_sz = 0;
+        int input_num = 0;
+        int output_num = 0;
         char* arg;
         char* arg_context;
         int arg_index = 0;
@@ -93,6 +124,17 @@ char*** parser(char* line){
             }
             size_t arg_sz = strlen(arg) + 1;
             if((arg[0] == '<' ) || (arg[0] == '>' )){
+                if(arg[0] == '<')
+                    ++input_num;
+                else
+                    ++output_num;
+                if((input_num > 1) || (output_num > 1)){
+                    //controlli mancanti da fare nella exec_command
+                    perror("");
+                    free_dblptr(toredirect);
+                    free_mtrx(mtrx);
+                    return NULL;
+                }
                 size_t torealloc = toredirect_sz + 2;
                 if((toredirect=realloc(toredirect, torealloc*sizeof(char*))) == NULL){
                     perror("");
@@ -225,4 +267,113 @@ bool arg_semantic_correctness(char* arg, int arg_index){
             }
     }
     return true;
+}
+
+void exec_command(char *** mtrx){
+    if(mtrx == NULL){
+        perror("");
+        return;
+    }
+    int cmds;
+    int ** pipearr;
+    if((cmds=cmds_num(mtrx)) > 1){
+        pipearr = malloc((cmds)*sizeof(int*));
+        int_empty_array(pipearr, cmds);
+    }
+    pid_t pid;
+    int row = 0;
+    while(mtrx[row] != NULL){
+        if((cmds > 1) && (mtrx[row+1] != NULL)){
+            if((pipearr[row] = malloc(2*sizeof(int))) == NULL){
+                perror("");
+                //close e free delle pipe
+                //free della matrice
+                return;
+            }
+            if(pipe(pipearr[row])){
+		        perror("arrivo");//errno
+                //close e free delle pipe
+                //free della matrice
+		        return;
+	        }
+        }
+        pid = fork();
+	    if(pid == -1){
+            perror("");
+            return;
+        }
+	    if(pid == 0){
+            if(cmds > 1){
+                if(row == 0){
+                    if(dup2(pipearr[row][WRITE_END], STDOUT_FILENO) == -1){
+		                perror("arrivo");//errno
+                        //close e free delle pipe
+                        //free della matrice
+		                return;
+	                }
+                    close(pipearr[row][READ_END]);
+                    close(pipearr[row][WRITE_END]);
+                }
+                else if(mtrx[row+1] != NULL){
+                    if(dup2(pipearr[row-1][READ_END], STDIN_FILENO) == -1){
+		                perror("arrivo");//errno
+                        //close e free delle pipe
+                        //free della matrice
+		                return;
+	                }
+                    close(pipearr[row-1][READ_END]);                                // OJO: hai gia fatto la close nel figlio precedente
+                    close(pipearr[row-1][WRITE_END]);                               // quindi vediamo se funziona
+                    if(dup2(pipearr[row][WRITE_END], STDOUT_FILENO) == -1){
+		                perror("arrivo");//errno
+                        //close e free delle pipe
+                        //free della matrice
+		                return;
+	                }
+                    close(pipearr[row][READ_END]);
+                    close(pipearr[row][WRITE_END]);
+                }
+                else{
+                    if(dup2(pipearr[row-1][READ_END], STDIN_FILENO) == -1){
+		                perror("2arrivo");//errno
+                        //close e free delle pipe
+                        //free della matrice
+		                return;
+	                }
+                    close(pipearr[row-1][READ_END]);
+                    close(pipearr[row-1][WRITE_END]);
+                }
+            }
+            char ** redir = getfirst_redir(mtrx[row]);
+            int i = 0;
+            if(redir != NULL){
+                while(redir[i] != NULL){
+                    int fd = open(redir[i]+1, O_CREAT|O_RDWR, 0666);
+                    if(redir[i][0] == '<'){
+                        dup2(fd, STDIN_FILENO);
+                        close(fd);
+                    }
+                    else{
+                        dup2(fd, STDOUT_FILENO);
+                        close(fd);
+                    }
+                    free(redir[i]);
+                    redir[i] = NULL;
+                    ++i;
+                }
+                if(execvp(mtrx[row][0], mtrx[row]) == -1){
+                    perror("");
+                    return;
+                }
+            }
+	    }
+        ++row;
+    }
+    int status;
+    if(cmds > 1){
+        close(pipearr[0][WRITE_END]);
+        close(pipearr[0][READ_END]);
+    }
+    //chiudere ciclicamente e freeare tutte le pipe?
+	waitpid(pid, &status, 0);       //funziona cosi la wait o bisogna fare una per ogni figlio?
+    //fare la free di matrix (qui o nel main)
 }
