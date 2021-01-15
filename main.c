@@ -1,20 +1,19 @@
 #include "ubash.h"
 
 int main(int argc, char *argv[]){
-    char a[]={"ps aux -lhr | grep $ Andrefrox | okay all'right"};
-    char*** to_parse = parser(a);
-    int cmd_index = 0;
-
-    if(to_parse != NULL){
-        while(to_parse[cmd_index] != NULL){
-            int arg_index = 0;
-            printf("cmd %d\n", cmd_index);
-            while(to_parse[cmd_index][arg_index] != NULL){
-                printf("%s\n", to_parse[cmd_index][arg_index]);
-                ++arg_index;
-            }
-            ++cmd_index;
-        }
+    char *** command = NULL;
+    char * line;
+    int status = 0;
+    while(true){
+        line = getcommand(status);
+        command = parser(line);
+        if(command == NULL)
+            break;
+        if((command[1] == NULL) && (command[0][0][0] == 'c') && (command[0][0][1] == 'd') && (command[0][0][2] == '\0'))
+            status = change_directory(command[0]);
+        else
+            status = exec_command(command);
+        free_mtrx(command);
     }
-    free_mtrx(to_parse);
+    exit(EXIT_SUCCESS);
 }
